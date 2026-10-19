@@ -1,5 +1,11 @@
 # Release notes
 
+### Local backport
+
+*   Skip empty track runs in `FragmentedMp4Extractor` ([#3471](https://github.com/androidx/media/issues/3471)).
+    Backported from `38c92ff6e746669712ef06bbfdb7c5421f2004d0`; remove this local
+    backport when upgrading to a release containing that upstream fix.
+
 ## 1.12
 
 ### 1.12.0-alpha02 (2026-10-26)
