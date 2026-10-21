@@ -15,6 +15,7 @@
 #
 
 LOCAL_PATH := $(call my-dir)
+# Modified by RelaxPic: forward optional size flags without changing codec selection.
 CONFIG_DIR := $(LOCAL_PATH)/libvpx_android_configs/$(TARGET_ARCH_ABI)
 libvpx_source_dir := $(LOCAL_PATH)/libvpx
 
@@ -34,7 +35,7 @@ ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
 include $(CLEAR_VARS)
 LOCAL_MODULE := libvpx_dotprod
 LOCAL_SRC_FILES := $(addprefix libvpx/, $(libvpx_dotprod_c_srcs))
-LOCAL_CFLAGS := -DHAVE_CONFIG_H=vpx_config.h -O3
+LOCAL_CFLAGS := -DHAVE_CONFIG_H=vpx_config.h -O3 $(MEDIA3_SIZE_CFLAGS)
 LOCAL_C_INCLUDES := $(CONFIG_DIR) $(libvpx_source_dir)
 LOCAL_CFLAGS += -march=armv8.2-a+dotprod
 include $(BUILD_STATIC_LIBRARY)
@@ -42,7 +43,7 @@ include $(BUILD_STATIC_LIBRARY)
 include $(CLEAR_VARS)
 LOCAL_MODULE := libvpx_i8mm
 LOCAL_SRC_FILES := $(addprefix libvpx/, $(libvpx_i8mm_c_srcs))
-LOCAL_CFLAGS := -DHAVE_CONFIG_H=vpx_config.h -O3
+LOCAL_CFLAGS := -DHAVE_CONFIG_H=vpx_config.h -O3 $(MEDIA3_SIZE_CFLAGS)
 LOCAL_C_INCLUDES := $(CONFIG_DIR) $(libvpx_source_dir)
 LOCAL_CFLAGS += -march=armv8.2-a+dotprod+i8mm
 include $(BUILD_STATIC_LIBRARY)
@@ -52,7 +53,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := libvpx
 LOCAL_CFLAGS := -DHAVE_CONFIG_H=vpx_config.h
 LOCAL_ARM_MODE := arm
-LOCAL_CFLAGS += -O3
+LOCAL_CFLAGS += -O3 $(MEDIA3_SIZE_CFLAGS)
 
 # config specific include should go first to pick up the config specific rtcd.
 LOCAL_C_INCLUDES := $(CONFIG_DIR) $(libvpx_source_dir)
@@ -79,5 +80,5 @@ endif
 LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/libvpx \
                            $(LOCAL_PATH)/libvpx/vpx
 
-LOCAL_LDFLAGS := -Wl,--version-script=$(CONFIG_DIR)/libvpx.ver
+LOCAL_LDFLAGS := -Wl,--version-script=$(CONFIG_DIR)/libvpx.ver $(MEDIA3_SIZE_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
