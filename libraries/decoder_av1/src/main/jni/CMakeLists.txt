@@ -22,6 +22,9 @@ set(CMAKE_CXX_STANDARD 14)
 
 project(libdav1dJNI C CXX)
 
+# Modified by RelaxPic: optional size optimization; upstream defaults retained.
+option(MEDIA3_DECODER_SIZE_OPTIMIZED "Optimize code size without removing decoder features" OFF)
+
 # Devices using armeabi-v7a are not required to support
 # Neon which is why Neon is disabled by default for
 # armeabi-v7a build. This flag enables it.
@@ -32,7 +35,10 @@ if(${ANDROID_ABI} MATCHES "armeabi-v7a")
 endif()
 
 string(TOLOWER "${CMAKE_BUILD_TYPE}" build_type)
-if(build_type MATCHES "^rel")
+if(MEDIA3_DECODER_SIZE_OPTIMIZED)
+    add_compile_options(-Oz -flto=thin -ffunction-sections -fdata-sections)
+    add_link_options(-flto=thin -Wl,--gc-sections,--icf=safe,--exclude-libs,ALL)
+elseif(build_type MATCHES "^rel")
     add_compile_options("-O2")
 endif()
 

@@ -15,6 +15,13 @@
 #
 
 WORKING_DIR := $(call my-dir)
+# Modified by RelaxPic: optional size optimization; upstream defaults retained.
+MEDIA3_SIZE_CFLAGS :=
+MEDIA3_SIZE_LDFLAGS :=
+ifeq ($(MEDIA3_DECODER_SIZE_OPTIMIZED),true)
+MEDIA3_SIZE_CFLAGS := -Oz -flto=thin -ffunction-sections -fdata-sections
+MEDIA3_SIZE_LDFLAGS := -flto=thin -Wl,--gc-sections,--icf=safe,--exclude-libs,ALL
+endif
 include $(CLEAR_VARS)
 LIBVPX_ROOT := $(WORKING_DIR)/libvpx
 
@@ -32,7 +39,8 @@ LOCAL_SRC_FILES := vpx_jni.cc
 LOCAL_LDLIBS := -llog -lz -lm -landroid
 LOCAL_SHARED_LIBRARIES := libvpx
 LOCAL_STATIC_LIBRARIES := cpufeatures
-LOCAL_CFLAGS += -fvisibility=hidden
+LOCAL_CFLAGS += -fvisibility=hidden $(MEDIA3_SIZE_CFLAGS)
+LOCAL_LDFLAGS += $(MEDIA3_SIZE_LDFLAGS)
 
 include $(BUILD_SHARED_LIBRARY)
 
