@@ -1292,7 +1292,8 @@ public final class BoxParser {
           || childAtomType == Mp4Box.TYPE_dvhe
           || childAtomType == Mp4Box.TYPE_dvh1
           || childAtomType == Mp4Box.TYPE_apv1
-          || childAtomType == Mp4Box.TYPE_dav1) {
+          || childAtomType == Mp4Box.TYPE_dav1
+          || ProResSampleEntry.isSupported(childAtomType)) {
         parseVideoSampleEntry(
             stsd,
             childAtomType,
@@ -1319,6 +1320,7 @@ public final class BoxParser {
           || childAtomType == Mp4Box.TYPE_lpcm
           || childAtomType == Mp4Box.TYPE_sowt
           || childAtomType == Mp4Box.TYPE_twos
+          || QuickTimePcmSampleEntry.isSupported(childAtomType)
           || childAtomType == Mp4Box.TYPE__mp2
           || childAtomType == Mp4Box.TYPE__mp3
           || childAtomType == Mp4Box.TYPE_mha1
@@ -1519,6 +1521,8 @@ public final class BoxParser {
       mimeType = MimeTypes.VIDEO_MPEG;
     } else if (atomType == Mp4Box.TYPE_H263) {
       mimeType = MimeTypes.VIDEO_H263;
+    } else if (ProResSampleEntry.isSupported(atomType)) {
+      mimeType = ProResSampleEntry.MIME_TYPE;
     }
 
     @Nullable List<byte[]> initializationData = null;
@@ -2301,6 +2305,14 @@ public final class BoxParser {
     } else if (atomType == Mp4Box.TYPE_twos) {
       mimeType = MimeTypes.AUDIO_RAW;
       pcmEncoding = C.ENCODING_PCM_16BIT_BIG_ENDIAN;
+    } else if (QuickTimePcmSampleEntry.isSupported(atomType)) {
+      pcmEncoding = QuickTimePcmSampleEntry.encoding(
+          java.nio.ByteBuffer.wrap(parent.getData(), 0, parent.limit()), childPosition, position + size,
+          quickTimeSoundDescriptionVersion, pcmEncoding);
+      if (pcmEncoding == C.ENCODING_INVALID) {
+        return;
+      }
+      mimeType = MimeTypes.AUDIO_RAW;
     } else if (atomType == Mp4Box.TYPE_lpcm) {
       mimeType = MimeTypes.AUDIO_RAW;
       if (pcmEncoding == Format.NO_VALUE) {

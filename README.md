@@ -1,5 +1,12 @@
 # AndroidX Media
 
+RelaxPic modification notice (2026-11-02): the MP4 extractor recognizes six
+QuickTime ProRes sample entries (excluding ProRes RAW) and integer `in24` PCM.
+PCM byte order follows `wave/enda` for version 0/1 and authoritative sample
+description flags for version 2; invalid version 2 formats are rejected.
+This is independent of the local fragmented-MP4 seeking backport. Review both
+capabilities before replacing the local extractor with a future upstream release.
+
 AndroidX Media is a collection of libraries for implementing media use cases on
 Android, including local playback (via ExoPlayer), video editing (via
 Transformer) and media sessions.
