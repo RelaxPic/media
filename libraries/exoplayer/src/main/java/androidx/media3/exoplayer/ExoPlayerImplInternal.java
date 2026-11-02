@@ -1806,6 +1806,7 @@ import java.util.Objects;
               && (playbackInfo.playbackState == Player.STATE_BUFFERING
                   || playbackInfo.playbackState == Player.STATE_READY)) {
             // Seek will be performed to the current position. Do nothing.
+            seekPositionAdjusted |= periodPositionUs != playbackInfo.positionUs;
             periodPositionUs = playbackInfo.positionUs;
             return;
           }
