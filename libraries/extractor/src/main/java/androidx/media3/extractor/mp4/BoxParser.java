@@ -567,26 +567,26 @@ public final class BoxParser {
     // Fixed sample size raw audio may need to be rechunked.
     int fixedSampleSize = sampleSizeBox.getFixedSampleSize();
     @Nullable String sampleMimeType = track.format.sampleMimeType;
-    boolean legacyImaSamples = QuickTimeImaSampleTable.MIME_TYPE.equals(sampleMimeType)
+    boolean legacyPacketSamples = QuickTimePacketAudio.samplesPerPacket(sampleMimeType) > 0
         && fixedSampleSize == 1;
-    if (legacyImaSamples) {
-      // Old QuickTime tables count decoded PCM samples, not compressed IMA packets.
+    if (legacyPacketSamples) {
+      // Old QuickTime tables count decoded PCM samples, not compressed packets.
       ExtractorUtil.checkContainerInput(
           remainingTimestampDeltaChanges == 0 && timestampDeltaInTimeUnits == 1
               && remainingSamplesAtTimestampDelta == sampleCount
-              && QuickTimeImaSampleTable.packetCount(sampleCount) >= 0
+              && QuickTimePacketAudio.packetCount(sampleMimeType, sampleCount) >= 0
               && remainingTimestampOffsetChanges == 0 && remainingSynchronizationSamples == 0,
-          "Unsupported QuickTime IMA sample table");
-      fixedSampleSize = QuickTimeImaSampleTable.packetSize(track.format.channelCount);
-      ExtractorUtil.checkContainerInput(fixedSampleSize > 0, "Invalid IMA channel count");
-      timestampDeltaInTimeUnits = QuickTimeImaSampleTable.SAMPLES_PER_PACKET;
+          "Unsupported QuickTime packet audio sample table");
+      fixedSampleSize = QuickTimePacketAudio.packetSize(sampleMimeType, track.format.channelCount);
+      ExtractorUtil.checkContainerInput(fixedSampleSize > 0, "Invalid packet audio channel count");
+      timestampDeltaInTimeUnits = QuickTimePacketAudio.samplesPerPacket(sampleMimeType);
     }
     boolean rechunkFixedSizeSamples =
         fixedSampleSize != C.LENGTH_UNSET
             && (MimeTypes.AUDIO_RAW.equals(sampleMimeType)
                 || MimeTypes.AUDIO_MLAW.equals(sampleMimeType)
                 || MimeTypes.AUDIO_ALAW.equals(sampleMimeType)
-                || legacyImaSamples)
+                || legacyPacketSamples)
             && remainingTimestampDeltaChanges == 0
             && remainingTimestampOffsetChanges == 0
             && remainingSynchronizationSamples == 0;
@@ -605,18 +605,20 @@ public final class BoxParser {
     if (rechunkFixedSizeSamples) {
       long[] chunkOffsetsBytes = new long[chunkIterator.length];
       int[] chunkSampleCounts = new int[chunkIterator.length];
-      long imaPacketCount = 0;
+      long packetCount = 0;
       while (chunkIterator.moveNext()) {
         chunkOffsetsBytes[chunkIterator.index] = chunkIterator.offset;
-        int chunkSamples = legacyImaSamples
-            ? QuickTimeImaSampleTable.packetCount(chunkIterator.numSamples) : chunkIterator.numSamples;
-        ExtractorUtil.checkContainerInput(chunkSamples >= 0, "Unaligned QuickTime IMA chunk");
+        int chunkSamples = legacyPacketSamples
+            ? QuickTimePacketAudio.packetCount(sampleMimeType, chunkIterator.numSamples)
+            : chunkIterator.numSamples;
+        ExtractorUtil.checkContainerInput(chunkSamples >= 0, "Unaligned QuickTime audio chunk");
         chunkSampleCounts[chunkIterator.index] = chunkSamples;
-        imaPacketCount += chunkSamples;
+        packetCount += chunkSamples;
       }
       ExtractorUtil.checkContainerInput(
-          !legacyImaSamples || imaPacketCount == QuickTimeImaSampleTable.packetCount(sampleCount),
-          "Inconsistent QuickTime IMA sample count");
+          !legacyPacketSamples
+              || packetCount == QuickTimePacketAudio.packetCount(sampleMimeType, sampleCount),
+          "Inconsistent QuickTime audio sample count");
       FixedSampleSizeRechunker.Results rechunkedResults =
           FixedSampleSizeRechunker.rechunk(
               fixedSampleSize, chunkOffsetsBytes, chunkSampleCounts, timestampDeltaInTimeUnits);
@@ -2339,7 +2341,11 @@ public final class BoxParser {
       mimeType = MimeTypes.AUDIO_RAW;
       pcmEncoding = C.ENCODING_PCM_16BIT_BIG_ENDIAN;
     } else if (atomType == LegacyCameraSampleEntry.IMA4) {
-      mimeType = QuickTimeImaSampleTable.MIME_TYPE;
+      mimeType = QuickTimePacketAudio.MIME_TYPE;
+    } else if (atomType == LegacyCameraSampleEntry.MAC3) {
+      mimeType = "audio/x-mace3";
+    } else if (atomType == LegacyCameraSampleEntry.MAC6) {
+      mimeType = "audio/x-mace6";
     } else if (atomType == LegacyCameraSampleEntry.RAW) {
       pcmEncoding = quickTimeSoundDescriptionVersion == 2
           ? pcmEncoding : LegacyCameraSampleEntry.rawPcmEncoding(declaredSampleBits);

@@ -8,6 +8,10 @@ import androidx.media3.common.MimeTypes;
 /** Legacy camera sample entries whose packets can be passed directly to the decoder. */
 /* package */ final class LegacyCameraSampleEntry {
   static final int JPEG = 0x6a706567;
+  static final int MJPA = 0x6d6a7061;
+  static final int MJPB = 0x6d6a7062;
+  static final int MAC3 = 0x4d414333;
+  static final int MAC6 = 0x4d414336;
   static final int DVC = 0x64766320;
   static final int DVCP = 0x64766370;
   static final int DVPP = 0x64767070;
@@ -20,7 +24,10 @@ import androidx.media3.common.MimeTypes;
   static String videoMimeType(int type) {
     switch (type) {
       case JPEG:
+      case MJPA:
         return MimeTypes.VIDEO_MJPEG;
+      case MJPB:
+        return "video/x-mjpeg-b";
       case DVC:
       case DVCP:
       case DVPP:
@@ -32,7 +39,7 @@ import androidx.media3.common.MimeTypes;
 
   static boolean isAudio(int type) {
     // dvca contains multiplexed DV audio, not PCM packets.
-    return type == IMA4 || type == RAW;
+    return type == IMA4 || type == RAW || type == MAC3 || type == MAC6;
   }
 
   static boolean isJpegTerminator(int type, byte[] data, int start, int end) {
