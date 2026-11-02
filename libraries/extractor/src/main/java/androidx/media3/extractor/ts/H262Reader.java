@@ -46,10 +46,6 @@ public final class H262Reader implements ElementaryStreamReader {
   private @MonotonicNonNull String formatId;
   private @MonotonicNonNull TrackOutput output;
 
-  // Maps (frame_rate_code - 1) indices to values, as defined in ITU-T H.262 Table 6-4.
-  private static final double[] FRAME_RATE_VALUES =
-      new double[] {24000d / 1001, 24, 25, 30000d / 1001, 30, 50, 60000d / 1001, 60};
-
   @Nullable private final UserDataReader userDataReader;
   private final String containerMimeType;
   @Nullable private final ParsableByteArray userDataParsable;
@@ -251,7 +247,10 @@ public final class H262Reader implements ElementaryStreamReader {
 
     float pixelWidthHeightRatio = 1f;
     int aspectRatioCode = (csdData[7] & 0xF0) >> 4;
-    switch (aspectRatioCode) {
+    boolean mpeg2 = csdBuffer.sequenceExtensionPosition != 0;
+    if (!mpeg2) {
+      pixelWidthHeightRatio = MpegVideoSequence.mpeg1PixelRatio(aspectRatioCode);
+    } else switch (aspectRatioCode) {
       case 2:
         pixelWidthHeightRatio = (4 * height) / (float) (3 * width);
         break;
@@ -270,25 +269,15 @@ public final class H262Reader implements ElementaryStreamReader {
         new Format.Builder()
             .setId(formatId)
             .setContainerMimeType(containerMimeType)
-            .setSampleMimeType(MimeTypes.VIDEO_MPEG2)
+            .setSampleMimeType(mpeg2 ? MimeTypes.VIDEO_MPEG2 : MimeTypes.VIDEO_MPEG)
             .setWidth(width)
             .setHeight(height)
             .setPixelWidthHeightRatio(pixelWidthHeightRatio)
             .setInitializationData(Collections.singletonList(csdData))
             .build();
 
-    long frameDurationUs = 0;
-    int frameRateCodeMinusOne = (csdData[7] & 0x0F) - 1;
-    if (0 <= frameRateCodeMinusOne && frameRateCodeMinusOne < FRAME_RATE_VALUES.length) {
-      double frameRate = FRAME_RATE_VALUES[frameRateCodeMinusOne];
-      int sequenceExtensionPosition = csdBuffer.sequenceExtensionPosition;
-      int frameRateExtensionN = (csdData[sequenceExtensionPosition + 9] & 0x60) >> 5;
-      int frameRateExtensionD = (csdData[sequenceExtensionPosition + 9] & 0x1F);
-      if (frameRateExtensionN != frameRateExtensionD) {
-        frameRate *= (frameRateExtensionN + 1d) / (frameRateExtensionD + 1);
-      }
-      frameDurationUs = (long) (C.MICROS_PER_SECOND / frameRate);
-    }
+    long frameDurationUs =
+        MpegVideoSequence.frameDurationUs(csdData, csdBuffer.sequenceExtensionPosition);
 
     return Pair.create(format, frameDurationUs);
   }

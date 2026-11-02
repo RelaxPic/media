@@ -22,7 +22,6 @@ import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.ParserException;
-import androidx.media3.common.util.ParsableBitArray;
 import androidx.media3.common.util.ParsableByteArray;
 import androidx.media3.common.util.TimestampAdjuster;
 import androidx.media3.common.util.UnstableApi;
@@ -37,7 +36,7 @@ import java.io.IOException;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
-/** Extracts data from the MPEG-2 PS container format. */
+/** Extracts data from MPEG-1 and MPEG-2 program streams. */
 @UnstableApi
 public final class PsExtractor implements Extractor {
 
@@ -93,7 +92,7 @@ public final class PsExtractor implements Extractor {
   @Override
   public boolean sniff(ExtractorInput input) throws IOException {
     byte[] scratch = new byte[14];
-    input.peekFully(scratch, 0, 14);
+    if (!input.peekFully(scratch, 0, 12, true)) return false;
 
     // Verify the PACK_START_CODE for the first 4 bytes
     if (PACK_START_CODE
@@ -103,29 +102,14 @@ public final class PsExtractor implements Extractor {
             | (scratch[3] & 0xFF))) {
       return false;
     }
-    // Verify the 01xxx1xx marker on the 5th byte
-    if ((scratch[4] & 0xC4) != 0x44) {
-      return false;
+    int fixedLength = 8;
+    if ((scratch[4] & 0xc0) == 0x40) {
+      input.peekFully(scratch, 12, 2);
+      fixedLength = 10;
     }
-    // Verify the xxxxx1xx marker on the 7th byte
-    if ((scratch[6] & 0x04) != 0x04) {
-      return false;
-    }
-    // Verify the xxxxx1xx marker on the 9th byte
-    if ((scratch[8] & 0x04) != 0x04) {
-      return false;
-    }
-    // Verify the xxxxxxx1 marker on the 10th byte
-    if ((scratch[9] & 0x01) != 0x01) {
-      return false;
-    }
-    // Verify the xxxxxx11 marker on the 13th byte
-    if ((scratch[12] & 0x03) != 0x03) {
-      return false;
-    }
-    // Read the stuffing length from the 14th byte (last 3 bits)
-    int packStuffingLength = scratch[13] & 0x07;
-    input.advancePeekPosition(packStuffingLength);
+    int headerLength = PsPackHeader.length(scratch, 4, 4 + fixedLength);
+    if (headerLength < 0) return false;
+    input.advancePeekPosition(headerLength - fixedLength);
     // Now check that the next 3 bytes are the beginning of an MPEG start code
     input.peekFully(scratch, 0, 3);
     return (PACKET_START_CODE_PREFIX
@@ -206,17 +190,15 @@ public final class PsExtractor implements Extractor {
       onEndOfInput();
       return RESULT_END_OF_INPUT;
     } else if (nextStartCode == PACK_START_CODE) {
-      // Now peek the rest of the pack_header.
-      input.peekFully(psPacketBuffer.getData(), 0, 10);
-
-      // We only care about the pack_stuffing_length in here, skip the first 77 bits.
-      psPacketBuffer.setPosition(9);
-
-      // Last 3 bits is the length.
-      int packStuffingLength = psPacketBuffer.readUnsignedByte() & 0x07;
-
-      // Now skip the stuffing and the pack header.
-      input.skipFully(packStuffingLength + 14);
+      input.peekFully(psPacketBuffer.getData(), 0, 8);
+      int fixedLength = 8;
+      if ((psPacketBuffer.getData()[0] & 0xc0) == 0x40) {
+        input.peekFully(psPacketBuffer.getData(), 8, 2);
+        fixedLength = 10;
+      }
+      int headerLength = PsPackHeader.length(psPacketBuffer.getData(), 0, fixedLength);
+      // Resynchronize after malformed pack headers instead of trusting their lengths.
+      input.skipFully(headerLength < 0 ? 1 : headerLength + 4);
       return RESULT_CONTINUE;
     } else if (nextStartCode == SYSTEM_HEADER_START_CODE) {
       // We just skip all this, but we need to get the length first.
@@ -327,21 +309,14 @@ public final class PsExtractor implements Extractor {
   /** Parses PES packet data and extracts samples. */
   private static final class PesReader {
 
-    private static final int PES_SCRATCH_SIZE = 64;
-
     private final ElementaryStreamReader pesPayloadReader;
     private final TimestampAdjuster timestampAdjuster;
-    private final ParsableBitArray pesScratch;
     // Whether this reader consumes the MPEG-PS private_stream_1 (0xBD), which in DVD-style content
     // carries a sub-stream header (sub_stream_id, number_of_frame_headers and
     // first_access_unit_pointer) before the audio elementary stream.
     private final boolean isPrivateStream1;
 
-    private boolean ptsFlag;
-    private boolean dtsFlag;
     private boolean seenFirstDts;
-    private int extendedHeaderLength;
-    private long timeUs;
 
     private PesReader(
         ElementaryStreamReader pesPayloadReader,
@@ -350,7 +325,6 @@ public final class PsExtractor implements Extractor {
       this.pesPayloadReader = pesPayloadReader;
       this.timestampAdjuster = timestampAdjuster;
       this.isPrivateStream1 = isPrivateStream1;
-      pesScratch = new ParsableBitArray(new byte[PES_SCRATCH_SIZE]);
     }
 
     /**
@@ -372,12 +346,13 @@ public final class PsExtractor implements Extractor {
      * @throws ParserException If the payload could not be parsed.
      */
     public void consume(ParsableByteArray data) throws ParserException {
-      data.readBytes(pesScratch.data, 0, 3);
-      pesScratch.setPosition(0);
-      parseHeader();
-      data.readBytes(pesScratch.data, 0, extendedHeaderLength);
-      pesScratch.setPosition(0);
-      parseHeaderExtension();
+      PsPesHeader header = PsPesHeader.read(data);
+      if (!seenFirstDts && header.dts != C.TIME_UNSET) {
+        timestampAdjuster.adjustTsTimestamp(header.dts);
+        seenFirstDts = true;
+      }
+      long timeUs = header.pts == C.TIME_UNSET ? 0
+          : timestampAdjuster.adjustTsTimestamp(header.pts);
       // For DVD-style private_stream_1 (AC-3/DTS/LPCM), a sub-stream header follows the PES header
       // and precedes the audio elementary stream. It must be stripped so it isn't fed into the
       // audio reader as elementary data, which would corrupt the audio frame spanning this PES
@@ -415,48 +390,6 @@ public final class PsExtractor implements Extractor {
       pesPayloadReader.endOfInputReached();
     }
 
-    private void parseHeader() {
-      // Note: see ISO/IEC 13818-1, section 2.4.3.6 for detailed information on the format of
-      // the header.
-      // First 8 bits are skipped: '10' (2), PES_scrambling_control (2), PES_priority (1),
-      // data_alignment_indicator (1), copyright (1), original_or_copy (1)
-      pesScratch.skipBits(8);
-      ptsFlag = pesScratch.readBit();
-      dtsFlag = pesScratch.readBit();
-      // ESCR_flag (1), ES_rate_flag (1), DSM_trick_mode_flag (1),
-      // additional_copy_info_flag (1), PES_CRC_flag (1), PES_extension_flag (1)
-      pesScratch.skipBits(6);
-      extendedHeaderLength = pesScratch.readBits(8);
-    }
 
-    private void parseHeaderExtension() {
-      timeUs = 0;
-      if (ptsFlag) {
-        pesScratch.skipBits(4); // '0010' or '0011'
-        long pts = (long) pesScratch.readBits(3) << 30;
-        pesScratch.skipBits(1); // marker_bit
-        pts |= pesScratch.readBits(15) << 15;
-        pesScratch.skipBits(1); // marker_bit
-        pts |= pesScratch.readBits(15);
-        pesScratch.skipBits(1); // marker_bit
-        if (!seenFirstDts && dtsFlag) {
-          pesScratch.skipBits(4); // '0011'
-          long dts = (long) pesScratch.readBits(3) << 30;
-          pesScratch.skipBits(1); // marker_bit
-          dts |= pesScratch.readBits(15) << 15;
-          pesScratch.skipBits(1); // marker_bit
-          dts |= pesScratch.readBits(15);
-          pesScratch.skipBits(1); // marker_bit
-          // Subsequent PES packets may have earlier presentation timestamps than this one, but they
-          // should all be greater than or equal to this packet's decode timestamp. We feed the
-          // decode timestamp to the adjuster here so that in the case that this is the first to be
-          // fed, the adjuster will be able to compute an offset to apply such that the adjusted
-          // presentation timestamps of all future packets are non-negative.
-          timestampAdjuster.adjustTsTimestamp(dts);
-          seenFirstDts = true;
-        }
-        timeUs = timestampAdjuster.adjustTsTimestamp(pts);
-      }
-    }
   }
 }

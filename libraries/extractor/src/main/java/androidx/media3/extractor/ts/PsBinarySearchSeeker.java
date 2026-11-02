@@ -144,20 +144,13 @@ import java.io.IOException;
     private static void skipToEndOfCurrentPack(ParsableByteArray packetBuffer) {
       int limit = packetBuffer.limit();
 
-      if (packetBuffer.bytesLeft() < 10) {
-        // We require at least 9 bytes for pack header to read SCR value + 1 byte for pack_stuffing
-        // length.
+      int headerLength = PsPackHeader.length(
+          packetBuffer.getData(), packetBuffer.getPosition(), limit);
+      if (headerLength < 0 || packetBuffer.bytesLeft() < headerLength) {
         packetBuffer.setPosition(limit);
         return;
       }
-      packetBuffer.skipBytes(9);
-
-      int packStuffingLength = packetBuffer.readUnsignedByte() & 0x07;
-      if (packetBuffer.bytesLeft() < packStuffingLength) {
-        packetBuffer.setPosition(limit);
-        return;
-      }
-      packetBuffer.skipBytes(packStuffingLength);
+      packetBuffer.skipBytes(headerLength);
 
       if (packetBuffer.bytesLeft() < 4) {
         packetBuffer.setPosition(limit);
@@ -166,6 +159,10 @@ import java.io.IOException;
 
       int nextStartCode = peekIntAtPosition(packetBuffer.getData(), packetBuffer.getPosition());
       if (nextStartCode == PsExtractor.SYSTEM_HEADER_START_CODE) {
+        if (packetBuffer.bytesLeft() < 6) {
+          packetBuffer.setPosition(limit);
+          return;
+        }
         packetBuffer.skipBytes(4);
         int systemHeaderLength = packetBuffer.readUnsignedShort();
         if (packetBuffer.bytesLeft() < systemHeaderLength) {

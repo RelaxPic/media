@@ -118,18 +118,8 @@ import java.io.IOException;
    * header start position (just behind the pack start code).
    */
   public static long readScrValueFromPack(ParsableByteArray packetBuffer) {
-    int originalPosition = packetBuffer.getPosition();
-    if (packetBuffer.bytesLeft() < 9) {
-      // We require at 9 bytes for pack header to read scr value
-      return C.TIME_UNSET;
-    }
-    byte[] scrBytes = new byte[9];
-    packetBuffer.readBytes(scrBytes, /* offset= */ 0, scrBytes.length);
-    packetBuffer.setPosition(originalPosition);
-    if (!checkMarkerBits(scrBytes)) {
-      return C.TIME_UNSET;
-    }
-    return readScrValueFromPackHeader(scrBytes);
+    return PsPackHeader.scr(
+        packetBuffer.getData(), packetBuffer.getPosition(), packetBuffer.limit());
   }
 
   private int finishReadDuration(ExtractorInput input) {
@@ -219,44 +209,4 @@ import java.io.IOException;
         | (data[position + 3] & 0xFF);
   }
 
-  private static boolean checkMarkerBits(byte[] scrBytes) {
-    // Verify the 01xxx1xx marker on the 0th byte
-    if ((scrBytes[0] & 0xC4) != 0x44) {
-      return false;
-    }
-    // 1st byte belongs to scr field.
-    // Verify the xxxxx1xx marker on the 2nd byte
-    if ((scrBytes[2] & 0x04) != 0x04) {
-      return false;
-    }
-    // 3rd byte belongs to scr field.
-    // Verify the xxxxx1xx marker on the 4rd byte
-    if ((scrBytes[4] & 0x04) != 0x04) {
-      return false;
-    }
-    // Verify the xxxxxxx1 marker on the 5th byte
-    if ((scrBytes[5] & 0x01) != 0x01) {
-      return false;
-    }
-    // 6th and 7th bytes belongs to program_max_rate field.
-    // Verify the xxxxxx11 marker on the 8th byte
-    return (scrBytes[8] & 0x03) == 0x03;
-  }
-
-  /**
-   * Returns the value of SCR base - 33 bits in big endian order from the PS pack header, ignoring
-   * the marker bits. Note: See ISO/IEC 13818-1, Table 2-33 for details of the SCR field in
-   * pack_header.
-   *
-   * <p>We ignore SCR Ext, because it's too small to have any significance.
-   */
-  private static long readScrValueFromPackHeader(byte[] scrBytes) {
-    return ((scrBytes[0] & 0b00111000L) >> 3) << 30
-        | (scrBytes[0] & 0b00000011L) << 28
-        | (scrBytes[1] & 0xFFL) << 20
-        | ((scrBytes[2] & 0b11111000L) >> 3) << 15
-        | (scrBytes[2] & 0b00000011L) << 13
-        | (scrBytes[3] & 0xFFL) << 5
-        | (scrBytes[4] & 0b11111000L) >> 3;
-  }
 }
