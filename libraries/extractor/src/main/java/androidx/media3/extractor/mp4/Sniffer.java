@@ -153,6 +153,22 @@ public final class Sniffer {
       }
       bytesSearched += headerSize;
 
+      if (atomType == QuickTimeWideBox.TYPE && headerSize == Mp4Box.HEADER_SIZE
+          && atomSize >= 2 * Mp4Box.HEADER_SIZE) {
+        // Some original QuickTime files wrap mdat in a wide box instead of placing
+        // an empty wide box before it. Check the child, never accept wide alone.
+        long remainingFileSize = inputLength == C.LENGTH_UNSET ? C.LENGTH_UNSET
+            : inputLength - input.getPeekPosition() + headerSize;
+        buffer.reset(Mp4Box.HEADER_SIZE);
+        input.peekFully(buffer.getData(), 0, Mp4Box.HEADER_SIZE);
+        long childSize = buffer.readUnsignedInt();
+        int childType = buffer.readInt();
+        foundGoodFileType |= QuickTimeWideBox.containsMediaData(
+            atomSize, childSize, childType, remainingFileSize);
+        headerSize += Mp4Box.HEADER_SIZE;
+        bytesSearched += Mp4Box.HEADER_SIZE;
+      }
+
       if (atomType == Mp4Box.TYPE_moov || atomType == Mp4Box.TYPE_uuid) {
         // These boxes can both be quite large, so we increase the search size, either to sniff
         // additional boxes after the uuid box, or to make sure we don't miss an mvex box inside
