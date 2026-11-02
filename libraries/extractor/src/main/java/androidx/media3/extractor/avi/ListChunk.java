@@ -87,6 +87,9 @@ import com.google.common.collect.ImmutableList;
         return StreamFormatChunk.parseFrom(trackType, body);
       case AviExtractor.FOURCC_strn:
         return StreamNameChunk.parseFrom(body);
+      case VideoPropertiesChunk.TYPE:
+        return new VideoPropertiesChunk(VideoPropertiesChunk.pixelRatio(
+            java.nio.ByteBuffer.wrap(body.getData(), body.getPosition(), body.bytesLeft())));
       default:
         return null;
     }

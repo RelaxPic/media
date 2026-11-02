@@ -567,11 +567,26 @@ public final class BoxParser {
     // Fixed sample size raw audio may need to be rechunked.
     int fixedSampleSize = sampleSizeBox.getFixedSampleSize();
     @Nullable String sampleMimeType = track.format.sampleMimeType;
+    boolean legacyImaSamples = QuickTimeImaSampleTable.MIME_TYPE.equals(sampleMimeType)
+        && fixedSampleSize == 1;
+    if (legacyImaSamples) {
+      // Old QuickTime tables count decoded PCM samples, not compressed IMA packets.
+      ExtractorUtil.checkContainerInput(
+          remainingTimestampDeltaChanges == 0 && timestampDeltaInTimeUnits == 1
+              && remainingSamplesAtTimestampDelta == sampleCount
+              && QuickTimeImaSampleTable.packetCount(sampleCount) >= 0
+              && remainingTimestampOffsetChanges == 0 && remainingSynchronizationSamples == 0,
+          "Unsupported QuickTime IMA sample table");
+      fixedSampleSize = QuickTimeImaSampleTable.packetSize(track.format.channelCount);
+      ExtractorUtil.checkContainerInput(fixedSampleSize > 0, "Invalid IMA channel count");
+      timestampDeltaInTimeUnits = QuickTimeImaSampleTable.SAMPLES_PER_PACKET;
+    }
     boolean rechunkFixedSizeSamples =
         fixedSampleSize != C.LENGTH_UNSET
             && (MimeTypes.AUDIO_RAW.equals(sampleMimeType)
                 || MimeTypes.AUDIO_MLAW.equals(sampleMimeType)
-                || MimeTypes.AUDIO_ALAW.equals(sampleMimeType))
+                || MimeTypes.AUDIO_ALAW.equals(sampleMimeType)
+                || legacyImaSamples)
             && remainingTimestampDeltaChanges == 0
             && remainingTimestampOffsetChanges == 0
             && remainingSynchronizationSamples == 0;
@@ -590,10 +605,18 @@ public final class BoxParser {
     if (rechunkFixedSizeSamples) {
       long[] chunkOffsetsBytes = new long[chunkIterator.length];
       int[] chunkSampleCounts = new int[chunkIterator.length];
+      long imaPacketCount = 0;
       while (chunkIterator.moveNext()) {
         chunkOffsetsBytes[chunkIterator.index] = chunkIterator.offset;
-        chunkSampleCounts[chunkIterator.index] = chunkIterator.numSamples;
+        int chunkSamples = legacyImaSamples
+            ? QuickTimeImaSampleTable.packetCount(chunkIterator.numSamples) : chunkIterator.numSamples;
+        ExtractorUtil.checkContainerInput(chunkSamples >= 0, "Unaligned QuickTime IMA chunk");
+        chunkSampleCounts[chunkIterator.index] = chunkSamples;
+        imaPacketCount += chunkSamples;
       }
+      ExtractorUtil.checkContainerInput(
+          !legacyImaSamples || imaPacketCount == QuickTimeImaSampleTable.packetCount(sampleCount),
+          "Inconsistent QuickTime IMA sample count");
       FixedSampleSizeRechunker.Results rechunkedResults =
           FixedSampleSizeRechunker.rechunk(
               fixedSampleSize, chunkOffsetsBytes, chunkSampleCounts, timestampDeltaInTimeUnits);
@@ -1293,7 +1316,8 @@ public final class BoxParser {
           || childAtomType == Mp4Box.TYPE_dvh1
           || childAtomType == Mp4Box.TYPE_apv1
           || childAtomType == Mp4Box.TYPE_dav1
-          || ProResSampleEntry.isSupported(childAtomType)) {
+          || ProResSampleEntry.isSupported(childAtomType)
+          || LegacyCameraSampleEntry.videoMimeType(childAtomType) != null) {
         parseVideoSampleEntry(
             stsd,
             childAtomType,
@@ -1321,6 +1345,7 @@ public final class BoxParser {
           || childAtomType == Mp4Box.TYPE_sowt
           || childAtomType == Mp4Box.TYPE_twos
           || QuickTimePcmSampleEntry.isSupported(childAtomType)
+          || LegacyCameraSampleEntry.isAudio(childAtomType)
           || childAtomType == Mp4Box.TYPE__mp2
           || childAtomType == Mp4Box.TYPE__mp3
           || childAtomType == Mp4Box.TYPE_mha1
@@ -1523,6 +1548,8 @@ public final class BoxParser {
       mimeType = MimeTypes.VIDEO_H263;
     } else if (ProResSampleEntry.isSupported(atomType)) {
       mimeType = ProResSampleEntry.MIME_TYPE;
+    } else {
+      mimeType = LegacyCameraSampleEntry.videoMimeType(atomType);
     }
 
     @Nullable List<byte[]> initializationData = null;
@@ -1546,6 +1573,10 @@ public final class BoxParser {
     @Nullable DolbyVisionConfig dolbyVisionConfig = null;
 
     while (childPosition - position < size) {
+      if (LegacyCameraSampleEntry.isJpegTerminator(
+          atomType, parent.getData(), childPosition, position + size)) {
+        break;
+      }
       parent.setPosition(childPosition);
       int childStartPosition = parent.getPosition();
       int childAtomSize = parent.readInt();
@@ -2202,6 +2233,7 @@ public final class BoxParser {
     int channelCount;
     int sampleRate;
     int sampleRateMlp = 0;
+    int declaredSampleBits = 0;
     @C.PcmEncoding int pcmEncoding = Format.NO_VALUE;
     @Nullable String codecs = null;
     @Nullable EsdsData esdsData = null;
@@ -2209,7 +2241,8 @@ public final class BoxParser {
 
     if (quickTimeSoundDescriptionVersion == 0 || quickTimeSoundDescriptionVersion == 1) {
       channelCount = parent.readUnsignedShort();
-      parent.skipBytes(6); // sampleSize, compressionId, packetSize.
+      declaredSampleBits = parent.readUnsignedShort();
+      parent.skipBytes(4); // compressionId, packetSize.
 
       sampleRate = parent.readUnsignedFixedPoint1616();
       // The sample rate has been redefined as a 32-bit value for Dolby TrueHD (MLP) streams.
@@ -2305,6 +2338,15 @@ public final class BoxParser {
     } else if (atomType == Mp4Box.TYPE_twos) {
       mimeType = MimeTypes.AUDIO_RAW;
       pcmEncoding = C.ENCODING_PCM_16BIT_BIG_ENDIAN;
+    } else if (atomType == LegacyCameraSampleEntry.IMA4) {
+      mimeType = QuickTimeImaSampleTable.MIME_TYPE;
+    } else if (atomType == LegacyCameraSampleEntry.RAW) {
+      pcmEncoding = quickTimeSoundDescriptionVersion == 2
+          ? pcmEncoding : LegacyCameraSampleEntry.rawPcmEncoding(declaredSampleBits);
+      if (pcmEncoding == C.ENCODING_INVALID || pcmEncoding == Format.NO_VALUE) {
+        return;
+      }
+      mimeType = MimeTypes.AUDIO_RAW;
     } else if (QuickTimePcmSampleEntry.isSupported(atomType)) {
       pcmEncoding = QuickTimePcmSampleEntry.encoding(
           java.nio.ByteBuffer.wrap(parent.getData(), 0, parent.limit()), childPosition, position + size,

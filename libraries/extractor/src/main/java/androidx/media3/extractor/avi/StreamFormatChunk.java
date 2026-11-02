@@ -82,10 +82,11 @@ import com.google.common.collect.ImmutableList;
     }
     int channelCount = body.readLittleEndianUnsignedShort();
     int samplesPerSecond = body.readLittleEndianInt();
-    body.skipBytes(6); // averageBytesPerSecond (4 bytes), nBlockAlign (2 bytes).
+    body.skipBytes(4); // averageBytesPerSecond.
+    int blockAlignment = body.readLittleEndianUnsignedShort();
     int bitsPerSample = body.readLittleEndianUnsignedShort();
     int pcmEncoding = Util.getPcmEncoding(bitsPerSample);
-    int cbSize = body.bytesLeft() > 0 ? body.readLittleEndianUnsignedShort() : 0;
+    int cbSize = body.bytesLeft() >= 2 ? body.readLittleEndianUnsignedShort() : 0;
     Format.Builder formatBuilder = new Format.Builder();
     formatBuilder
         .setSampleMimeType(mimeType)
@@ -94,7 +95,17 @@ import com.google.common.collect.ImmutableList;
     if (mimeType.equals(MimeTypes.AUDIO_RAW) && pcmEncoding != C.ENCODING_INVALID) {
       formatBuilder.setPcmEncoding(pcmEncoding);
     }
-    if (mimeType.equals(MimeTypes.AUDIO_AAC) && cbSize > 0) {
+    if (AviAdpcmFormat.isSupported(formatTag)) {
+      if (cbSize > body.bytesLeft()
+          || !AviAdpcmFormat.isValid(
+              formatTag, channelCount, blockAlignment, bitsPerSample, cbSize)) {
+        return null;
+      }
+      byte[] codecData = new byte[cbSize];
+      body.readBytes(codecData, 0, cbSize);
+      formatBuilder.setInitializationData(ImmutableList.of(
+          codecData, AviAdpcmFormat.decoderParameters(blockAlignment, bitsPerSample)));
+    } else if (mimeType.equals(MimeTypes.AUDIO_AAC) && cbSize > 0) {
       byte[] codecData = new byte[cbSize];
       body.readBytes(codecData, /* offset= */ 0, codecData.length);
       formatBuilder.setInitializationData(ImmutableList.of(codecData));
@@ -107,6 +118,10 @@ import com.google.common.collect.ImmutableList;
     switch (tag) {
       case 0x1: // WAVE_FORMAT_PCM
         return MimeTypes.AUDIO_RAW;
+      case 0x2: // WAVE_FORMAT_ADPCM
+        return "audio/x-adpcm-ms";
+      case 0x11: // WAVE_FORMAT_IMA_ADPCM
+        return "audio/x-adpcm-ima-wav";
       case 0x55: // WAVE_FORMAT_MPEGLAYER3
         return MimeTypes.AUDIO_MPEG;
       case 0xff: // WAVE_FORMAT_AAC
@@ -142,6 +157,10 @@ import com.google.common.collect.ImmutableList;
       case 0x47504a4d: // MJPG
       case 0x67706a6d: // mjpg
         return MimeTypes.VIDEO_MJPEG;
+      case 0x64737664: // dvsd
+      case 0x64687664: // dvhd
+      case 0x6c737664: // dvsl
+        return "video/x-dv";
       default:
         return null;
     }

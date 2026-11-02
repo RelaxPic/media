@@ -511,6 +511,10 @@ public final class AviExtractor implements Extractor {
     Format streamFormat = streamFormatChunk.format;
     Format.Builder builder = streamFormat.buildUpon();
     builder.setId(streamId);
+    VideoPropertiesChunk properties = streamList.getChild(VideoPropertiesChunk.class);
+    if ("video/x-dv".equals(streamFormat.sampleMimeType) && properties != null) {
+      builder.setPixelWidthHeightRatio(properties.pixelRatio);
+    }
     int suggestedBufferSize = aviStreamHeaderChunk.suggestedBufferSize;
     if (suggestedBufferSize != 0) {
       builder.setMaxInputSize(suggestedBufferSize);
@@ -520,6 +524,12 @@ public final class AviExtractor implements Extractor {
       builder.setLabel(streamName.name);
     }
     int trackType = MimeTypes.getTrackType(streamFormat.sampleMimeType);
+    if (trackType == C.TRACK_TYPE_VIDEO) {
+      float frameRate = aviStreamHeaderChunk.getFrameRate();
+      if (Float.isFinite(frameRate) && frameRate > 0) {
+        builder.setFrameRate(frameRate);
+      }
+    }
     if (trackType == C.TRACK_TYPE_AUDIO || trackType == C.TRACK_TYPE_VIDEO) {
       TrackOutput trackOutput = extractorOutput.track(streamId, trackType);
       Format format = builder.build();
@@ -530,7 +540,10 @@ public final class AviExtractor implements Extractor {
           streamId,
           aviStreamHeaderChunk,
           trackOutput,
-          MimeTypes.allSamplesAreSyncSamples(format.sampleMimeType, format.codecs));
+          MimeTypes.allSamplesAreSyncSamples(format.sampleMimeType, format.codecs)
+              || "video/x-dv".equals(format.sampleMimeType)
+              || "audio/x-adpcm-ima-wav".equals(format.sampleMimeType)
+              || "audio/x-adpcm-ms".equals(format.sampleMimeType));
     } else {
       // We don't currently support tracks other than video and audio.
       return null;
